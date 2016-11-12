@@ -1467,7 +1467,7 @@ static struct argp_option options[] =
   {
     "reset",
     'r',
-    0,
+    NULL,
     0,
     "Resets previously saved parameters associated with the given source directory by removing the parameter file.",
     0
@@ -1475,7 +1475,7 @@ static struct argp_option options[] =
   {
     "unmount",
     'u',
-     0,
+     NULL,
      0,
      "Unmount the given directory. If the source directory is given, an attempt will be made to unmount all associated mountpoints.",
      0
