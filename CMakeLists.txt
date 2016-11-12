@@ -9,7 +9,7 @@ include(CheckLibraryExists)
 INCLUDE(GNUInstallDirs)
 
 add_definitions( -Wextra -Wall -pedantic -std=c99 )
-add_definitions( -D_BSD_SOURCE -fstack-protector-all --param ssp-buffer-size=4 )
+add_definitions( -D_DEFAULT_SOURCE -fstack-protector-all --param ssp-buffer-size=4 )
 
 include_directories( ${PROJECT_SOURCE_DIR}/src )
 
