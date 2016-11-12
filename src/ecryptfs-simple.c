@@ -1229,13 +1229,13 @@ save_parameters(char * opts_str, char * filepath)
   {
     die("error: failed to open %s for writing (%s)\n", filepath, strerror(errno));
   }
-  fgets(old_opts_str, MAX_OPTS_STR_LEN, f);
+  (void)fgets(old_opts_str, MAX_OPTS_STR_LEN, f);
 
   debug_print("new options: \"%s\"\n", opts_str);
   debug_print("old options: \"%s\"\n", old_opts_str);
   if (strcmp(opts_str, old_opts_str) != 0)
   {
-    ftruncate(fileno(f), 0);
+    (void)ftruncate(fileno(f), 0);
 //     fseek(f, 0, SEEK_SET);
     fputs(opts_str, f);
     debug_print0("saved\n");
@@ -1261,7 +1261,7 @@ load_parameters(char * opts_str, char * filepath)
     {
       die("error: failed to open %s for reading (%s)\n", filepath, strerror(errno));
     }
-    fgets(tmp_str, MAX_OPTS_STR_LEN, f);
+    (void)fgets(tmp_str, MAX_OPTS_STR_LEN, f);
     fclose(f);
     clean_opts_str(tmp_str);
     debug_print("options: %s\n", tmp_str);
