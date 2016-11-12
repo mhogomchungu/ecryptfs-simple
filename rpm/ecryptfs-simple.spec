@@ -19,22 +19,22 @@
 Name:           ecryptfs-simple
 Version:        2016
 Release:        0
-Summary:        ecryptfs-simple is CLI front end to ecryptfs that works normal normal user account.
+Summary:        A CLI front end to ecryptfs that works normal normal user account
 License:        GPL-2.0
 Group:          Productivity/Security
-Source:         %{name}-%{version}.tar.xz
-Source100:      ecryptfs-simple-rpmlint
-URL:            http://mhogomchungu.github.io/ecryptfs-simple
+Source:         %{name}-%{version}.tar.gz
+URL:            https://github.com/mhogomchungu/ecryptfs-simple
 
 BuildRequires: cmake
 BuildRequires: gcc
+BuildRequires: gcc-c++
 BuildRequires: glibc-devel
-BuildRequires: libmount-devel
 BuildRequires: libgcrypt-devel
 BuildRequires: ecryptfs-utils-devel
+BuildRequires: libmount-devel
 
 %description
-ecryptfs-simple is CLI front end to ecryptfs that works normal normal user account.
+ecryptfs-simple is CLI front end to ecryptfs that works normal normal user account
 
 %prep
 %setup -q
