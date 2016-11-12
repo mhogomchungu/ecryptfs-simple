@@ -1,0 +1,46 @@
+ps: copy and paste all given commands to make sure you dont mistype them.
+ps: at step 5,replace "2016" to ecryptfs-simple version you are building.
+ps: these instructions assumes rpm build directory is at "~/rpmbuild".
+    Modify the paths in step 5 if they are different in your distribution.
+
+
+1. To build,make sure you have installed:
+
+   a. Development package of libgcrypt
+   b. Development package of ecryptfs-util
+   c. Development package of libmount
+   d. cmake
+   e. gcc compiler
+   f. tar
+   g. xz
+
+2. decompress the ecryptfs-simple archive you downloaded(you should be able to do this from context menu
+   when you right the archive on your file manager).
+
+
+4. open the terminal and change directory to ecryptfs-simple's source folder.
+
+
+5. while on ecryptfs-simple source folder,run the following commands to create rpm building environment
+
+   ****************************************************************************************************************
+
+   rpmdev-setuptree
+   tar   -cf  ~/rpmbuild/SOURCES/ecryptfs-simple-2016.tar ../ecryptfs-simple-2016
+   xz    -z  ~/rpmbuild/SOURCES/ecryptfs-simple-2016.tar
+
+   ****************************************************************************************************************
+
+
+5. while on ecryptfs-simple source folder,run the following commad to create a ecryptfs-simple rpm package.
+
+   ****************************************************************************************************************
+
+   QA_RPATHS=$[ 0x0001|0x0010 ] rpmbuild -bb rpm/ecryptfs-simple.spec
+
+   ****************************************************************************************************************
+
+6. wait for the build to finish and look for the rpm packages in a folder located in "~/rpmbuild/RPMS/".
+
+7. consult your distribution's documentation on how to install .rpm packages and install the ones you will find in
+   step 6 above.

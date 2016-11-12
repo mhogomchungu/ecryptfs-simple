@@ -67,7 +67,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 // define this so gcc doesn't complain about ecryptfs using asprintf
 // #define _GNU_SOURCE
-
+#include <grp.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <linux/limits.h>
@@ -1701,11 +1701,26 @@ main(int argc, char * * argv)
   char path[PATH_MAX + 1];
   char opts_str[MAX_OPTS_STR_LEN];
   char mnt_params_str[MAX_OPTS_STR_LEN];
+  uid_t uid = getuid();
+  gid_t gid = uid;
 
-  if( gcry_control( GCRYCTL_INITIALIZATION_FINISHED_P ) == 0 ){
+  resume_privileges();
 
-    gcry_check_version( NULL ) ;
-    gcry_control( GCRYCTL_INITIALIZATION_FINISHED,0 ) ;
+  if ( setgroups( 1,&gid ) != 0 )
+  {
+      die ( "error: setgroups() failed" );
+  }
+  if ( setegid( uid ) != 0 )
+  {
+    die ( "error: setegid() failed" );
+  }
+
+  drop_privileges();
+
+  if (gcry_control(GCRYCTL_INITIALIZATION_FINISHED_P) == 0)
+  {
+    gcry_check_version (NULL);
+    gcry_control (GCRYCTL_INITIALIZATION_FINISHED, 0);
   }
 
   argp_parse (&argp, argc, argv, 0, 0, &arguments);
