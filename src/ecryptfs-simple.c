@@ -485,24 +485,19 @@ join_paths(char * a, char * b)
     return;
   }
 
-  if (b == NULL)
-  {
-	strcat(a,"/");
-	return;
-  }
-
   strcat(a,"/");
-  strcat(a, b);
 
-  /*
-   * We unconditionally added a trailing forward slash above and we use
-   * realpath below to remove it if it wasnt necessary
-   */
-  c = realpath(a,NULL);
-
-  strcpy(a,c);
-
-  free(c);
+  if (b != NULL)
+  {
+    strcat(a, b);
+    /*
+     * We unconditionally added a trailing forward slash above and we use
+     * realpath below to remove it if it wasnt necessary
+     */
+    c = realpath(a, NULL);
+    strcpy(a, c);
+    free(c);
+  }
 }
 
 
