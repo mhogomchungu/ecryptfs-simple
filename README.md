@@ -7,7 +7,7 @@ Improvements:
 
 1. Uses cmake as a build system.
 
-2. A bit of code clean up since it now compiles without warnings while using strict compile options.
+2. A bit of code clean up since it now compiles without warnings while using strict compiler options.
 
 3. Fix a bug that causes volumes config path to be at "~/.config/.ecryptfs-simple"
    instead of at "~/.config/ecryptfs-simple"
