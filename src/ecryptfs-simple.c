@@ -1,5 +1,5 @@
-﻿/*
-Copyright (C) 2012  Xyne
+/*
+Copyright (C) 2012-2016  Xyne
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -111,6 +111,12 @@ typedef int (* comparison_fn_t)(const void *, const void *);
 
 #define SHA512LEN 64
 #define SHA512(input, output) gcry_md_hash_buffer(GCRY_MD_SHA512, output, input, strlen(input))
+
+// Options
+#define YES_OPTION "y"
+#define NO_OPTION "n"
+#define FNEK_SIG_OPTIONS "ecryptfs_fnek_sig"
+#define FNE_OPTION "ecryptfs_enable_filename_crypto"
 
 static char * excluded_options = NULL;
 
@@ -368,8 +374,8 @@ int opts_str_contains_option(char * str, char * option)
 
 // This really should be included in the ecryptfs.h header.
 struct val_node {
-        void *val;
-        struct val_node *next;
+  void *val;
+  struct val_node *next;
 };
 
 
@@ -539,17 +545,30 @@ get_config_dir(char * path)
   of the file will be the hashed input path. The input path must exist.
 */
 void
-get_parameter_filepath(char * output_path, char * input_path)
+get_parameter_filepath(char * output_path, char * source_path, char * input_path)
 {
   char * fullpath;
+  if (input_path != NULL)
+  {
+    if (input_path[0] == '/' && input_path[1] == '/')
+    {
+      strcpy(output_path, source_path);
+      strcat(output_path, input_path+1);
+    }
+    else
+    {
+      strcpy(output_path, input_path);
+    }
+    return;
+  }
   get_config_dir(output_path);
   join_paths(output_path, NULL);
-  fullpath = realpath(input_path, NULL);
+  fullpath = realpath(source_path, NULL);
   if (fullpath == NULL)
   {
     die(
       "error: failed to canonicalize path (%s: %s)\n",
-      input_path,
+      source_path,
       strerror(errno)
     );
   }
@@ -739,7 +758,7 @@ clean_opts_str(char * str)
 {
   int i, j;
 
-  debug_print("input string: \"%s\" (%zi)\n", str, strlen(str));
+  debug_print("cleaning options string: \"%s\" (%zi)\n", str, strlen(str));
 
   i = 0;
   j = 0;
@@ -757,8 +776,8 @@ clean_opts_str(char * str)
       str[j] != '\n' &&
       // Skip empty options (",,")
       (
-        str[j] != ',' ||
-        (i > 0 && str[i-1] != ',')
+	str[j] != ',' ||
+	(i > 0 && str[i-1] != ',')
       )
     )
     {
@@ -844,7 +863,7 @@ arr_maybe_append_parameter(char * * arr, char * param)
       arr[0] = param;
       if (b >= 0)
       {
-        param[b] = '=';
+	param[b] = '=';
       }
       debug_print("overwrote \"%s\" to \"%s\"\n", elem, param);
       return 0;
@@ -862,12 +881,16 @@ arr_maybe_append_parameter(char * * arr, char * param)
 
 
 int
-str_maybe_append_parameter(char * target, char * param, int i)
+str_maybe_append_parameter(char * target, char * dirty_param, int i)
 {
+  char param[MAX_OPTS_STR_LEN];
+  int j;
+
   if (i < 0)
   {
     i = strlen(target);
   }
+  strcpy(param, dirty_param);
   clean_opts_str(param);
   debug_print("target: \"%s\", param: \"%s\", pos: %d\n", target, param, i);
   if (param[0] == '\0')
@@ -881,28 +904,27 @@ str_maybe_append_parameter(char * target, char * param, int i)
     if (MAX_OPTS_STR_LEN - i < 2)
     {
       die(
-        "error: maximum option string length exceeded (%u/%u)\n",
-        i + 2,
-        MAX_OPTS_STR_LEN
+      "error: maximum option string length exceeded (%u/%u)\n",
+       i + 2,
+       MAX_OPTS_STR_LEN
       );
     }
     target[i++] = ',';
     target[i] = '\0';
     debug_print("added comma: \"%s\"\n", target);
   }
-  while (param[0] != '\0')
+  for (j=0; param[j] != '\0'; ++j)
   {
     if (MAX_OPTS_STR_LEN - i < 2)
     {
       die(
-        "error: maximum option string length exceeded (%u/%u)\n",
-        i + 2,
-        MAX_OPTS_STR_LEN
+       "error: maximum option string length exceeded (%u/%u)\n",
+       i + 2,
+       MAX_OPTS_STR_LEN
       );
     }
-    target[i] = param[0];
+    target[i] = param[j];
     i ++;
-    param ++;
   }
   target[i] = '\0';
   debug_print("output string: \"%s\"\n", target);
@@ -1081,11 +1103,11 @@ struct default_parameter default_parameters[] =
 {
   {
     .name="ecryptfs_passthrough",
-    .value="ecryptfs_passthrough=no"
+    .value="ecryptfs_passthrough"
   },
   {
-    .name="ecryptfs_enable_filename_crypto",
-    .value="ecryptfs_enable_filename_crypto=no"
+    .name=FNE_OPTION,
+    .value=FNE_OPTION "=" NO_OPTION
   }
 };
 
@@ -1137,8 +1159,8 @@ concatenate_parameters(
 )
 {
   debug_print("input string: \"%s\"\n", concatenated_opts_str);
-  int i, length = -1, s;
-
+  size_t i;
+  int length = -1;
   char c, * param, tmp_str[MAX_OPTS_STR_LEN];
 
   while (mnt_params != NULL)
@@ -1166,23 +1188,32 @@ concatenate_parameters(
                    length
                  );
       }
+      /*
+        Add the file name encryption option if a file name encryption key is
+        passed.
+      */
+      if (! strcmp(tmp_str, FNEK_SIG_OPTIONS))
+      {
+        debug_print("adding %s\n", FNE_OPTION);
+        length = str_maybe_append_parameter(
+                   concatenated_opts_str,
+                   FNE_OPTION "=" YES_OPTION,
+                   length
+                 );
+      }
     }
     mnt_params = mnt_params->next;
   }
   debug_print("with mnt_params: \"%s\"\n", concatenated_opts_str);
 
-  s = (int)sizeof(default_parameters)/sizeof(struct default_parameter);
-
   // Add missing default parameters.
-  for (i=0; i<s; i++)
+  for (i=0; i<sizeof(default_parameters)/sizeof(struct default_parameter); i++)
   {
     if (! opts_str_contains_option(concatenated_opts_str, default_parameters[i].name))
     {
-      // Required because the appended value must be mutable for cleaning.
-      strcpy(tmp_str, default_parameters[i].value);
       length = str_maybe_append_parameter(
                  concatenated_opts_str,
-                 tmp_str,
+                 default_parameters[i].value,
                  length
                );
     }
@@ -1489,6 +1520,14 @@ static struct argp_option options[] =
     0
   },
   {
+    "config",
+    'c',
+    "<path>",
+    0,
+    "Set a custom configuration file path. If <path> begins with \"//\" then it will be take as relative to the source directory.",
+    0
+  },
+  {
     "print-config-path",
      PRINT_CONFIG_PATH_KEY,
      NULL,
@@ -1510,7 +1549,7 @@ struct arguments
 {
   char * argv[2];
   int argc, unmount, automount, reset, print_config_path;
-  char * mount_options, * excluded_options;
+  char * mount_options, * excluded_options, * config_path;
 };
 
 
@@ -1523,7 +1562,8 @@ struct arguments arguments = \
   .print_config_path = 0, \
   .unmount = 0, \
   .mount_options = NULL, \
-  .excluded_options = NULL \
+  .excluded_options = NULL, \
+  .config_path = NULL \
 }; \
 assert(PRINT_CONFIG_PATH_KEY != ARGP_KEY_ARG); \
 assert(PRINT_CONFIG_PATH_KEY != ARGP_KEY_END)
@@ -1550,6 +1590,9 @@ parse_opt (int key, char * arg, struct argp_state * state)
     break;
   case 'x':
     arguments->excluded_options = arg;
+    break;
+  case 'c':
+    arguments->config_path = arg;
     break;
 
   case PRINT_CONFIG_PATH_KEY:
@@ -1738,7 +1781,7 @@ main(int argc, char * * argv)
 
   if (arguments.reset || arguments.print_config_path)
   {
-    get_parameter_filepath(path, source_path);
+    get_parameter_filepath(path, source_path, arguments.config_path);
     if (arguments.print_config_path)
     {
       printf("%s\n", path);
@@ -1809,13 +1852,14 @@ main(int argc, char * * argv)
   }
   if (arguments.automount)
   {
-    get_parameter_filepath(path, source_path);
+    get_parameter_filepath(path, source_path, arguments.config_path);
     load_parameters(opts_str, path);
   }
   prompt_parameters(opts_str, mnt_params_str);
   mount_ecryptfs(source_path, target_path, mnt_params_str);
   if (arguments.automount)
   {
+    printf("Saving to %s\n", path);
     save_parameters(opts_str, path);
   }
   return EXIT_SUCCESS;
