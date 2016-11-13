@@ -67,6 +67,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 // define this so gcc doesn't complain about ecryptfs using asprintf
 // #define _GNU_SOURCE
+#include <stdio.h>
 #include <grp.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -378,9 +379,10 @@ struct val_node {
   struct val_node *next;
 };
 
-
-
-
+typedef struct {
+  char * value;
+  size_t size;
+}Buffer;
 
 /*******************************************************************************
  Copied From Synclinks
@@ -463,7 +465,7 @@ mkdir_p(char * path)
   Digest the input string.
 */
 void
-sha512_hexdigest(char * digest, char * input)
+sha512_hexdigest(char * digest, const char * input)
 {
   char * cursor;
   int i;
@@ -483,28 +485,29 @@ sha512_hexdigest(char * digest, char * input)
   A trailing slash is added to a if b is NULL. a may not be NULL.
 */
 void
-join_paths(char * a, char * b)
+join_paths(Buffer * e, const char * b)
 {
-  char * c;
+  size_t i = 0;
+  char * a = e->value;
 
   if (b != NULL && b[0] == '/')
   {
-    strcpy(a, b);
+    snprintf(e->value, e->size, "%s", b);
     return;
   }
 
-  strcat(a,"/");
-
+  while (a[i] != '\0')
+  {
+    i ++;
+  }
+  if (i > 0 && a[i-1] != '/')
+  {
+    a[i] = '/';
+  }
   if (b != NULL)
   {
-    strcat(a, b);
-    /*
-     * We unconditionally added a trailing forward slash above and we use
-     * realpath below to remove it if it wasnt necessary
-     */
-    c = realpath(a, NULL);
-    strcpy(a, c);
-    free(c);
+    strncat(a + i, b,e->size);
+    *(a + e->size - 1) = '\0' ;
   }
 }
 
@@ -513,18 +516,18 @@ join_paths(char * a, char * b)
   Get the path of the configuration file directory.
 */
 void
-get_config_dir(char * path)
+get_config_dir(Buffer * path)
 {
   char * value;
   value = getenv("XDG_CONFIG_HOME");
   if (value  != NULL)
   {
-    strcpy(path, value);
+    snprintf(path->value, path->size,"%s",value);
   }
   else
   {
     value = getenv("HOME");
-    strcpy(path, value);
+    snprintf(path->value, path->size,"%s", value);
     join_paths(path, ".config");
   }
 
@@ -532,7 +535,7 @@ get_config_dir(char * path)
 
   drop_privileges();
 
-  if (mkdir_p(path))
+  if (mkdir_p(path->value))
   {
     die("error: failed to create configuration directory (%s)\n", strerror(errno));
   }
@@ -545,19 +548,18 @@ get_config_dir(char * path)
   of the file will be the hashed input path. The input path must exist.
 */
 void
-get_parameter_filepath(char * output_path, char * source_path, char * input_path)
+get_parameter_filepath(Buffer * output_path, char * source_path, char * input_path)
 {
   char * fullpath;
   if (input_path != NULL)
   {
     if (input_path[0] == '/' && input_path[1] == '/')
     {
-      strcpy(output_path, source_path);
-      strcat(output_path, input_path+1);
+      snprintf(output_path->value, output_path->size, "%s%s",source_path, input_path+1);
     }
     else
     {
-      strcpy(output_path, input_path);
+      snprintf(output_path->value, output_path->size, "%s", input_path);
     }
     return;
   }
@@ -572,7 +574,7 @@ get_parameter_filepath(char * output_path, char * source_path, char * input_path
       strerror(errno)
     );
   }
-  sha512_hexdigest(output_path + strlen(output_path), fullpath);
+  sha512_hexdigest(output_path->value + strlen(output_path->value), fullpath);
   free(fullpath);
 }
 
@@ -883,14 +885,14 @@ arr_maybe_append_parameter(char * * arr, char * param)
 int
 str_maybe_append_parameter(char * target, char * dirty_param, int i)
 {
-  char param[MAX_OPTS_STR_LEN];
+  char param[MAX_OPTS_STR_LEN]={0};
   int j;
 
   if (i < 0)
   {
     i = strlen(target);
   }
-  strcpy(param, dirty_param);
+  snprintf(param, sizeof(param),"%s",dirty_param);
   clean_opts_str(param);
   debug_print("target: \"%s\", param: \"%s\", pos: %d\n", target, param, i);
   if (param[0] == '\0')
@@ -938,11 +940,12 @@ str_maybe_append_parameter(char * target, char * dirty_param, int i)
   array are appended at the end.
 */
 void
-sort_opts_str(char * opts_str)
+sort_opts_str(Buffer * opts_str_buffer)
 {
   size_t i, j, k, n, start;
   char sorted_str[MAX_OPTS_STR_LEN];
   char * * opts_arr;
+  char * opts_str = opts_str_buffer->value;
 
   debug_print("input string: \"%s\"\n", opts_str);
   clean_opts_str(opts_str);
@@ -1086,8 +1089,8 @@ sort_opts_str(char * opts_str)
     debug_print("updated: \"%s\"\n", sorted_str);
   }
 
-  strcpy(opts_str, sorted_str);
-  debug_print("output string: \"%s\"\n", opts_str);
+  snprintf( opts_str_buffer->value, opts_str_buffer->size, "%s", sorted_str);
+  debug_print("output string: \"%s\"\n", opts_str_buffer->value);
 }
 
 
@@ -1153,15 +1156,16 @@ concatenate_mnt_params(
 
 int
 concatenate_parameters(
-  char * concatenated_opts_str,
+  Buffer * concatenated_opts_str_buffer,
   struct val_node * mnt_params,
   char * opts_str
 )
 {
-  debug_print("input string: \"%s\"\n", concatenated_opts_str);
+  char * concatenated_opts_str = concatenated_opts_str_buffer->value;
   size_t i;
   int length = -1;
   char c, * param, tmp_str[MAX_OPTS_STR_LEN];
+  debug_print("input string: \"%s\"\n", concatenated_opts_str);
 
   while (mnt_params != NULL)
   {
@@ -1183,7 +1187,7 @@ concatenate_parameters(
       if (! opts_str_contains_option(concatenated_opts_str, tmp_str))
       {
         length = str_maybe_append_parameter(
-                   concatenated_opts_str,
+		   concatenated_opts_str,
                    (char *) mnt_params->val,
                    length
                  );
@@ -1196,7 +1200,7 @@ concatenate_parameters(
       {
         debug_print("adding %s\n", FNE_OPTION);
         length = str_maybe_append_parameter(
-                   concatenated_opts_str,
+		   concatenated_opts_str,
                    FNE_OPTION "=" YES_OPTION,
                    length
                  );
@@ -1224,7 +1228,7 @@ concatenate_parameters(
   if (opts_str != NULL)
   {
     length = str_maybe_append_parameter(
-               concatenated_opts_str,
+	       concatenated_opts_str,
                opts_str,
                length
              );
@@ -1232,7 +1236,7 @@ concatenate_parameters(
 
   debug_print("with opts_str: \"%s\"\n", concatenated_opts_str);
 
-  sort_opts_str(concatenated_opts_str);
+  sort_opts_str(concatenated_opts_str_buffer);
   debug_print("output string: \"%s\"\n", concatenated_opts_str);
   return length;
 }
@@ -1279,7 +1283,7 @@ save_parameters(char * opts_str, char * filepath)
 
 
 void
-load_parameters(char * opts_str, char * filepath)
+load_parameters(Buffer * opts_str, char * filepath)
 {
   char tmp_str[MAX_OPTS_STR_LEN];
   tmp_str[0] = '\0';
@@ -1296,15 +1300,15 @@ load_parameters(char * opts_str, char * filepath)
     fclose(f);
     clean_opts_str(tmp_str);
     debug_print("options: %s\n", tmp_str);
-    clean_opts_str(opts_str);
-    if (str_maybe_append_parameter(tmp_str, opts_str, -1) > 0)
+    clean_opts_str(opts_str->value);
+    if (str_maybe_append_parameter(tmp_str, opts_str->value, -1) > 0)
     {
-      strcpy(opts_str, tmp_str);
+      snprintf( opts_str->value, opts_str->size, "%s", tmp_str);
     }
   }
-  debug_print("with CLI options: %s\n", opts_str);
+  debug_print("with CLI options: %s\n", opts_str->value);
   sort_opts_str(opts_str);
-  debug_print("sorted: %s\n", opts_str);
+  debug_print("sorted: %s\n", opts_str->value);
 }
 
 /******************************************************************************/
@@ -1374,12 +1378,13 @@ echo_on()
 
 
 char *
-prompt_string(char * prompt, int len, char * value, int is_password)
+prompt_string(char * prompt, int len, char * value, int disable_echo)
 {
   int i, allocated;
   char c;
 
   allocated = 0;
+  disable_echo = disable_echo && isatty(fileno(stdin));
 
   if (value == NULL)
   {
@@ -1389,7 +1394,7 @@ prompt_string(char * prompt, int len, char * value, int is_password)
   {
     die("error: failed to allocate memory for input string\n");
   }
-  if (is_password)
+  if (disable_echo)
   {
     echo_off();
   }
@@ -1410,7 +1415,7 @@ prompt_string(char * prompt, int len, char * value, int is_password)
     }
   }
   value[i] = '\0';
-  if (is_password)
+  if (disable_echo)
   {
     echo_on();
   }
@@ -1654,7 +1659,7 @@ initialize(void)
 {
   if (tcgetattr(fileno(stdin), &initial_term))
   {
-    warning("warning: failed to retrieve terminal settings\n");
+    //warning("warning: failed to retrieve terminal settings\n");
   }
 
 
@@ -1674,15 +1679,16 @@ initialize(void)
 
 
 void
-prompt_parameters(char * opts_str, char * mnt_params_str)
+prompt_parameters(Buffer * opts_str_buffer, Buffer * mnt_params_str)
 {
   int rc;
-  char tmp_str[MAX_OPTS_STR_LEN];
+  char tmp_str[MAX_OPTS_STR_LEN] = {0};
+  Buffer tmp_str_buffer = {tmp_str,sizeof(tmp_str)};
   struct val_node * mnt_params;
   struct ecryptfs_ctx ctx;
   uint32_t version;
+  char * opts_str = opts_str_buffer->value;
 
-  tmp_str[0] = '\0';
   if (ecryptfs_get_version(&version))
   {
     die("error: failed to get eCryptfs version\n");
@@ -1700,19 +1706,19 @@ prompt_parameters(char * opts_str, char * mnt_params_str)
     die("error: failed to prompt for options\n");
   }
 
-  concatenate_parameters(tmp_str, mnt_params, opts_str);
+  concatenate_parameters(&tmp_str_buffer, mnt_params, opts_str);
 
   if (mnt_params_str != NULL)
   {
-//     mnt_params_str[0] = '\0';
-    strcpy(mnt_params_str, "ecryptfs_unlink_sigs");
-    concatenate_mnt_params(mnt_params_str, mnt_params);
+    //mnt_params_str[0] = '\0';
+    snprintf(opts_str_buffer->value, opts_str_buffer->size, "%s", "ecryptfs_unlink_sigs");
+    concatenate_mnt_params(mnt_params_str->value, mnt_params);
     sort_opts_str(mnt_params_str);
-    debug_print("mnt_params_str: %s\n", mnt_params_str);
+    debug_print("mnt_params_str: %s\n", mnt_params_str->value);
   }
 
   free(mnt_params);
-  strcpy(opts_str, tmp_str);
+  snprintf(opts_str_buffer->value, opts_str_buffer->size, "%s", tmp_str);
   debug_print("opts_str: %s\n", opts_str);
 }
 
@@ -1741,13 +1747,17 @@ int
 main(int argc, char * * argv)
 {
   ARGUMENTS(arguments);
-  char * source_path;
-  char * target_path;
-  char path[PATH_MAX + 1];
-  char opts_str[MAX_OPTS_STR_LEN];
-  char mnt_params_str[MAX_OPTS_STR_LEN];
+  char * source_path = NULL;
+  char * target_path = NULL;
+  char path[PATH_MAX + 1] = {0};
+  char opts_str[MAX_OPTS_STR_LEN] = {0};
+  char mnt_params_str[MAX_OPTS_STR_LEN] = {0};
   uid_t uid = getuid();
   gid_t gid = uid;
+  Buffer buffer_path           = {path,sizeof(path)};
+  Buffer buffer_opts_str       = {opts_str,sizeof(opts_str)};
+  Buffer buffer_mnt_params_str = {mnt_params_str,sizeof(mnt_params_str)};
+  size_t size;
 
   resume_privileges();
 
@@ -1781,7 +1791,7 @@ main(int argc, char * * argv)
 
   if (arguments.reset || arguments.print_config_path)
   {
-    get_parameter_filepath(path, source_path, arguments.config_path);
+    get_parameter_filepath(&buffer_path, source_path, arguments.config_path);
     if (arguments.print_config_path)
     {
       printf("%s\n", path);
@@ -1826,15 +1836,16 @@ main(int argc, char * * argv)
   // The string needs to be mutable for cleaning, so allocate memory.
   if (arguments.excluded_options != NULL)
   {
-    excluded_options = realloc(
-      excluded_options,
-      strlen(arguments.excluded_options) * sizeof(char)
-    );
+    size = strlen(arguments.excluded_options) * sizeof(char);
+
+    excluded_options = realloc(excluded_options,size);
+
     if (excluded_options == NULL)
     {
       die("error: failed to allocate memory\n");
     }
-    strcpy(excluded_options, arguments.excluded_options);
+    memset(excluded_options ,'\0', size);
+    snprintf(excluded_options, size, "%s", arguments.excluded_options);
     clean_opts_str(excluded_options);
     debug_print("excluded options: \"%s\"\n", excluded_options);
   }
@@ -1844,23 +1855,19 @@ main(int argc, char * * argv)
 
   if (arguments.mount_options != NULL)
   {
-    strcpy(opts_str, arguments.mount_options);
-  }
-  else
-  {
-    opts_str[0] = '\0';
+    snprintf(buffer_opts_str.value, buffer_opts_str.size, "%s", arguments.mount_options);
   }
   if (arguments.automount)
   {
-    get_parameter_filepath(path, source_path, arguments.config_path);
-    load_parameters(opts_str, path);
+    get_parameter_filepath(&buffer_path, source_path, arguments.config_path);
+    load_parameters(&buffer_opts_str, path);
   }
-  prompt_parameters(opts_str, mnt_params_str);
+  prompt_parameters(&buffer_opts_str, &buffer_mnt_params_str);
   mount_ecryptfs(source_path, target_path, mnt_params_str);
   if (arguments.automount)
   {
     printf("Saving to %s\n", path);
-    save_parameters(opts_str, path);
+    save_parameters(buffer_opts_str.value, path);
   }
   return EXIT_SUCCESS;
 }
