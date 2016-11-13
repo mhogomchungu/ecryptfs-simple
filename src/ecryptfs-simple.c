@@ -105,7 +105,7 @@ typedef int (* comparison_fn_t)(const void *, const void *);
 
 #define FS_TYPE "ecryptfs"
 #define MAX_OPTS_STR_LEN 0x400
-#define MAX_INPUT_STR_LEN 0xf
+#define MAX_INPUT_STR_LEN 255
 #define NAME "ecryptfs-simple"
 #include "version.h"
 
@@ -513,7 +513,7 @@ join_paths(Buffer * e, const char * b)
   }
   if (b != NULL)
   {
-    snprintf(a + i,e->size - i,"%s",b );
+    snprintf(a + i, e->size - i, "%s", b);
   }
 }
 
@@ -1394,7 +1394,7 @@ prompt_string(char * prompt, int len, char * value, int disable_echo)
 
   if (value == NULL)
   {
-    value = malloc(len * sizeof(char));
+    value = malloc((len + 1) * sizeof(char));
   }
   if (value == NULL)
   {
