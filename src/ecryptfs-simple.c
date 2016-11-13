@@ -498,7 +498,14 @@ join_paths(Buffer * e, const char * b)
 
   while (a[i] != '\0')
   {
-    i ++;
+    if (i == e->size - 1)
+    {
+       die( "error: buffer overflow detected");
+    }
+    else
+    {
+       i ++;
+    }
   }
   if (i > 0 && a[i-1] != '/')
   {
@@ -506,8 +513,7 @@ join_paths(Buffer * e, const char * b)
   }
   if (b != NULL)
   {
-    strncat(a + i, b,e->size);
-    *(a + e->size - 1) = '\0' ;
+    snprintf(a + i,e->size - i,"%s",b );
   }
 }
 
