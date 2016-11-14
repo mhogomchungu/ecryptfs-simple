@@ -33,6 +33,14 @@ BuildRequires: libgcrypt-devel
 BuildRequires: ecryptfs-utils-devel
 BuildRequires: libmount-devel
 
+%if 0%{?fedora}
+BuildRequires: keyutils-libs-devel
+%endif
+
+%if 0%{?suse_version}
+BuildRequires: keyutils-devel
+%endif
+
 %description
 ecryptfs-simple is CLI front end to ecryptfs that works normal normal user account
 

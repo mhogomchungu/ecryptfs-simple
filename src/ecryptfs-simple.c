@@ -138,6 +138,7 @@ typedef struct buffer_t {
 #endif
 
 #define UNUSED(x) (void)(x)
+#define IGNORE_RESULT(x) if(x){}
 
 static int INDENT_LEVEL = 0;
 
@@ -593,12 +594,12 @@ get_config_dir(buffer_t * path)
   value = getenv("XDG_CONFIG_HOME");
   if (value  != NULL)
   {
-    snprintf(path->value, path->size, value);
+    snprintf(path->value, path->size, "%s", value);
   }
   else
   {
     value = getenv("HOME");
-    snprintf(path->value, path->size, value);
+    snprintf(path->value, path->size, "%s", value);
     join_paths(path, ".config");
   }
   join_paths(path, NAME);
@@ -1330,13 +1331,13 @@ save_parameters(char * opts_str, char * filepath)
   {
     die("error: failed to open %s for writing (%s)\n", filepath, strerror(errno));
   }
-  fgets(old_opts_str, MAX_OPTS_STR_LEN, f);
+  IGNORE_RESULT(fgets(old_opts_str, MAX_OPTS_STR_LEN, f));
 
   debug_print("new options: \"%s\"\n", opts_str);
   debug_print("old options: \"%s\"\n", old_opts_str);
   if (strcmp(opts_str, old_opts_str) != 0)
   {
-    ftruncate(fileno(f), 0);
+    IGNORE_RESULT(ftruncate(fileno(f), 0));
 //     fseek(f, 0, SEEK_SET);
     fputs(opts_str, f);
     debug_print0("saved\n");
@@ -1362,7 +1363,7 @@ load_parameters(buffer_t * opts_buffer, char * filepath)
     {
       die("error: failed to open %s for reading (%s)\n", filepath, strerror(errno));
     }
-    fgets(tmp_str, MAX_OPTS_STR_LEN, f);
+    IGNORE_RESULT(fgets(tmp_str, MAX_OPTS_STR_LEN, f));
     fclose(f);
     clean_opts_str(tmp_str);
     debug_print("options: %s\n", tmp_str);
