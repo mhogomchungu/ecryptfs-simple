@@ -2,10 +2,12 @@
 To build,make sure you have installed:
 
 1. Development package of libgcrypt
-2. Development package of ecryptfs-util
+2. Development package of ecryptfs-util.The package name is "ecryptfs-utils-devel" in Fedora
+   and "libecryptfs-dev" in Debian.
 3. Development package of libmount
 4. cmake
 5. gcc compiler
+6. Development package of keyutils library
 
 How to build.
 

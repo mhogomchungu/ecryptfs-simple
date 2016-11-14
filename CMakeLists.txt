@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.6)
 
 project(ecryptfs-simple)
-set (VERSION_MAJOR "2016")
+set (VERSION_MAJOR "2016.11.14")
 
 find_package(PkgConfig)
 
@@ -42,7 +42,13 @@ find_library (ECRYPTFS_LIB ecryptfs)
 check_found ("${ECRYPTFS_LIB}" "ecryptfs lib")
 
 add_executable (ecryptfs-simple ${SRC})
-target_link_libraries (ecryptfs-simple "${GCRYPT_LIB}" "${ECRYPTFS_LIB}" -lmount)
+target_link_libraries (
+  ecryptfs-simple
+  "${GCRYPT_LIB}"
+  "${ECRYPTFS_LIB}"
+  -lmount
+  -lkeyutils
+)
 
 install (
   TARGETS ecryptfs-simple
