@@ -1054,7 +1054,7 @@ sort_opts_str(buffer_t * opts_buffer)
     n ++;
   }
 
-  debug_print("detected %lu options\n", n);
+  debug_print("detected %lu options\n", (long unsigned int)n);
 
   /*
     Create a temporary array to hold these options. Each array element will
@@ -2001,13 +2001,13 @@ main(int argc, char * * argv)
   // The string needs to be mutable for cleaning, so allocate memory.
   if (arguments.excluded_options != NULL)
   {
-    len = (strlen(arguments.excluded_options) + 1) * sizeof(char);
-    excluded_options = realloc(excluded_options, len);
+    len = strlen(arguments.excluded_options);
+    excluded_options = realloc(excluded_options, (len + 1) * sizeof(char));
     if (excluded_options == NULL)
     {
       die("error: failed to allocate memory\n");
     }
-    snprintf(excluded_options, len, "%s", arguments.excluded_options);
+    snprintf(excluded_options, len + 1, "%s", arguments.excluded_options);
     clean_opts_str(excluded_options);
     debug_print("excluded options: \"%s\"\n", excluded_options);
   }
