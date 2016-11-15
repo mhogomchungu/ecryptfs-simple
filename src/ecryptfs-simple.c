@@ -851,7 +851,7 @@ mnt_match_source(struct libmnt_fs * fs, void * path)
   const char * mnt_path;
   mnt_path = mnt_fs_get_srcpath(fs);
   return (
-	   strcmp(mnt_path, (char *) path) == 0 &&
+	   strcmp(mnt_path, path) == 0 &&
            strcmp(mnt_fs_get_fstype(fs), FS_TYPE) == 0
          );
 }
@@ -864,7 +864,7 @@ mnt_match_target(struct libmnt_fs * fs, void * path)
   const char * mnt_path;
   mnt_path = mnt_fs_get_target(fs);
   return (
-	   strcmp(mnt_path, (char *) path) == 0 &&
+	   strcmp(mnt_path, path) == 0 &&
            strcmp(mnt_fs_get_fstype(fs), FS_TYPE) == 0
          );
 }
@@ -886,7 +886,7 @@ unmount_target(const char * path)
 
 
 void
-unmount_simple(const char * path, int unlink_keys)
+unmount_simple(char * path, int unlink_keys)
 {
   //http://www.kernel.org/pub/linux/utils/util-linux/v2.21/libmount-docs/index.html
   struct libmnt_table * tb = mnt_new_table_from_file("/proc/self/mountinfo");
@@ -908,22 +908,7 @@ unmount_simple(const char * path, int unlink_keys)
   iter = mnt_new_iter(MNT_ITER_BACKWARD);
 
   while (
-    ! mnt_table_find_next_fs(tb, iter, mnt_match_source, (void *) path, &fs) &&
-    fs != NULL
-  )
-  {
-    target = mnt_fs_get_target(fs);
-    if (target != NULL)
-    {
-      unmount_target(target);
-      did_something = 1;
-    }
-  }
-
-  mnt_reset_iter(iter, MNT_ITER_BACKWARD);
-
-  while (
-    ! mnt_table_find_next_fs(tb, iter, mnt_match_target, (void *) path, &fs) &&
+    ! mnt_table_find_next_fs(tb, iter, mnt_match_source, path, &fs) &&
     fs != NULL
   )
   {
@@ -1317,7 +1302,7 @@ concatenate_mnt_params(
   {
     if (mnt_params->val != NULL)
     {
-      param = (char *) mnt_params->val;
+      param = mnt_params->val;
       param_len = strlen(param);
       if (param_len + 2 > buffer->size)
       {
@@ -1353,7 +1338,7 @@ concatenate_parameters(
     if (mnt_params->val != NULL)
     {
       i = 0;
-      param = (char *) mnt_params->val;
+      param = mnt_params->val;
       debug_print("adding %s\n", param);
       do {
         c = param[i];
@@ -1369,7 +1354,7 @@ concatenate_parameters(
       {
         length = str_maybe_append_parameter(
           concatenated_opts_buffer,
-	  (char *) mnt_params->val,
+	  mnt_params->val,
           length
         );
       }
@@ -1840,6 +1825,8 @@ prompt_parameters(buffer_t * opts_buffer, buffer_t * mnt_params_buffer)
   struct ecryptfs_ctx ctx;
   uint32_t version;
 
+  resume_privileges();
+
   if (ecryptfs_get_version(&version))
   {
     die("error: failed to get eCryptfs version\n");
@@ -1883,6 +1870,8 @@ prompt_parameters(buffer_t * opts_buffer, buffer_t * mnt_params_buffer)
   free(mnt_params);
   copy_string(opts_buffer, tmp_buffer.value, 0);
   debug_print("opts_str: %s\n", opts_buffer->value);
+
+  drop_privileges();
 }
 
 
@@ -2035,7 +2024,10 @@ main(int argc, char * * argv)
     }
     else
     {
-      printf("You may now remove leftover keys with keyctl if you are done.\n");
+      if (!arguments.unlink)
+      {
+	  printf("You may now remove leftover keys with keyctl if you are done.\n");
+      }
     }
     return EXIT_SUCCESS;
   }
@@ -2073,7 +2065,7 @@ main(int argc, char * * argv)
 
   if (arguments.mount_options != NULL)
   {
-    strcpy(opts_str, arguments.mount_options);
+    copy_string(&opts_buffer, arguments.mount_options, 0);
   }
   else
   {
