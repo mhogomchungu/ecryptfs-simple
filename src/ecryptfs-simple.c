@@ -1,4 +1,4 @@
-/*
+﻿/*
 Copyright (C) 2012-2016  Xyne
 
 This program is free software; you can redistribute it and/or
@@ -111,6 +111,9 @@ typedef int (* comparison_fn_t)(const void *, const void *);
 #define SHA512LEN 64
 #define SHA512(input, output) gcry_md_hash_buffer(GCRY_MD_SHA512, output, input, strlen(input))
 
+#define IGNORE_PARAMETER(x) (void)(x)
+#define IGNORE_RETURN_VALUE(x) if(x){}
+
 
 // Options
 #define YES_OPTION "y"
@@ -128,6 +131,34 @@ typedef struct buffer_t {
 } buffer_t;
 
 
+
+/****************************** Message Handling ******************************/
+
+/*
+  Centralized error message handling in case I decide to implement logging
+  later.
+*/
+void
+die_v(char * msg, va_list args)
+{
+  vfprintf(stderr, msg, args);
+  if (errno)
+  {
+    fprintf(stderr, "%s\n", strerror(errno));
+  }
+  exit(EXIT_FAILURE);
+}
+
+void
+die(char * msg, ...)
+{
+  va_list args;
+  va_start(args, msg);
+  die_v(msg, args);
+  va_end(args);
+}
+
+
 /********************************* Debugging **********************************/
 
 
@@ -137,9 +168,6 @@ typedef struct buffer_t {
   #define DEBUG 0
 #endif
 
-#define UNUSED(x) (void)(x)
-#define IGNORE_RESULT(x) if(x){}
-
 static int INDENT_LEVEL = 0;
 
 // Nested debug messages to facilitate tracing.
@@ -147,16 +175,16 @@ static int INDENT_LEVEL = 0;
 void
 __cyg_profile_func_enter(void * this_fn, void * call_site)
 {
-  UNUSED(this_fn);
-  UNUSED(call_site);
+  IGNORE_PARAMETER(this_fn);
+  IGNORE_PARAMETER(call_site);
   INDENT_LEVEL += 1;
 }
 
 void
 __cyg_profile_func_exit(void * this_fn, void * call_site)
 {
-  UNUSED(this_fn);
-  UNUSED(call_site);
+  IGNORE_PARAMETER(this_fn);
+  IGNORE_PARAMETER(call_site);
   INDENT_LEVEL -= 1;
 }
 #endif
@@ -165,11 +193,13 @@ __cyg_profile_func_exit(void * this_fn, void * call_site)
   #define FILENAME_COLOR "\033[34m"
   #define LINENUMBER_COLOR "\033[36m"
   #define FUNCTIONNAME_COLOR "\033[35m"
+  #define ERRNO_COLOR "\033[31m"
   #define RESET_COLOR "\033[0m"
 #else
   #define FILENAME_COLOR ""
   #define LINENUMBER_COLOR ""
   #define FUNCTIONNAME_COLOR ""
+  #define ERRNO_COLOR ""
   #define RESET_COLOR ""
 #endif
 
@@ -179,23 +209,34 @@ __cyg_profile_func_exit(void * this_fn, void * call_site)
 
 // With indentation
 
+#define debug_print_indent \
+  fprintf(DEBUG_FD, "%*s", INDENT_LEVEL*2, "")
+
 #define debug_print_prefix \
-  int i = INDENT_LEVEL; \
-  while(i--) \
-  { \
-    fprintf(stderr, "  "); \
-  } \
-  fprintf(\
+  debug_print_indent; \
+  fprintf( \
     DEBUG_FD, \
-    "%s%s %s%d %s%s(): %s", \
-    FILENAME_COLOR, \
-    __FILE__, \
-    LINENUMBER_COLOR, \
-    __LINE__, \
-    FUNCTIONNAME_COLOR, \
-    __func__, \
-    RESET_COLOR \
-  )
+    "%s%s %s%d\n", \
+    FILENAME_COLOR, __FILE__, \
+    LINENUMBER_COLOR, __LINE__ \
+  ); \
+  debug_print_indent; \
+  fprintf( \
+    DEBUG_FD, \
+    "%s%s()\n", \
+    FUNCTIONNAME_COLOR, __func__ \
+  ); \
+  if (errno) \
+  { \
+    debug_print_indent; \
+    fprintf( \
+      DEBUG_FD, \
+      "%serrno: %s\n", \
+      ERRNO_COLOR, strerror(errno) \
+    ); \
+  } \
+  debug_print_indent; \
+  fprintf(DEBUG_FD, RESET_COLOR);
 
 /*
 #define debug_print_prefix \
@@ -240,29 +281,44 @@ do \
 } while (0)
 
 
+#define debug_print_ids \
+  debug_print( \
+    "uid: %u, euid: %u, gid: %u, egid: %u\n", \
+    getuid(), \
+    geteuid(), \
+    getgid(), \
+    getegid() \
+  )
 
 
-/****************************** Message Handling ******************************/
 
-/*
-  Centralized error message handling in case I decide to implement logging
-  later.
-*/
-void
-die_v(char * msg, va_list args)
+
+/****************************** String Functions ******************************/
+
+inline size_t
+copy_string_n(buffer_t * a, const char * b, size_t offset)
 {
-  vfprintf(stderr, msg, args);
-  exit(EXIT_FAILURE);
+  size_t length = strlen(b);
+  if (offset > a->size)
+  {
+    die(
+      "error: offset greater than buffer size [%s, %lu, %lu]\n",
+      a->value,
+      a->size,
+      offset
+    );
+  }
+
+  if (length > (a->size - offset))
+  {
+    die("error: buffer overflow while appending \"%s\" to \"%s\"", b, a->value);
+  }
+  snprintf(a->value+offset, a->size-offset, "%s", b);
+  return offset + length;
 }
 
-void
-die(char * msg, ...)
-{
-  va_list args;
-  va_start(args, msg);
-  die_v(msg, args);
-  va_end(args);
-}
+#define copy_string(a, b, c)\
+  IGNORE_RETURN_VALUE(copy_string_n(a, b, c))
 
 
 
@@ -286,48 +342,50 @@ initialize_uids(void)
 void
 resume_privileges(void)
 {
-  int status;
+  int rc;
+  debug_print_ids;
   if (ruid == euid && rgid == egid)
   {
     return;
   }
 #ifdef _POSIX_SAVED_IDS
-  status = seteuid (euid) + setegid(egid);
+  rc = seteuid(euid) + setegid(egid);
 #else
-  status = setreuid (ruid, euid) + setregid(rgid, egid);
+  rc = setreuid(ruid, euid) + setregid(rgid, egid);
 #endif
-  if (status < 0)
+  if (rc)
   {
     die("error: failed to resume privileges\n");
   }
-  debug_print("euid: %u, egid: %u\n", euid, egid);
+  debug_print_ids;
 }
 
 
 void
 drop_privileges(void)
 {
-  int status;
+  int rc;
+  debug_print_ids;
   if (ruid == euid && rgid == egid)
   {
+    debug_print0("no privileges to drop\n");
     return;
   }
 #ifdef _POSIX_SAVED_IDS
-  status = setegid(rgid) + seteuid (ruid);
+  rc = setegid(rgid) + seteuid(ruid);
 #else
-  status = setregid(egid, rgid) + setreuid (euid, ruid);
+  rc = setregid(egid, rgid) + setreuid(euid, ruid);
 #endif
-  if (status < 0)
+  if (rc)
   {
     die("error: failed to drop privileges\n");
   }
-  debug_print("euid: %u, egid: %u\n", euid, egid);
+  debug_print_ids;
 }
 
 
 void check_privileges(void)
 {
-  return;
   uid_t uid = getuid();
   gid_t gid = uid;
   resume_privileges();
@@ -398,9 +456,9 @@ struct val_node {
 
 // This assumes an optino of the format <name>=<value>.
 int
-extract_option_value(char * str, const char * name, char * value)
+extract_option_value(const char * str, const char * name, char * value)
 {
-  char * pos = str;
+  const char * pos = str;
   size_t i=0;
   size_t str_len = strlen(str);
   size_t name_len = strlen(name);
@@ -517,34 +575,6 @@ mkdir_p(char * path)
 
 
 
-/*
-  Digest the input string and append it to the target.
-*/
-void
-append_sha512_hexdigest(buffer_t * target, const char * input)
-{
-  char digest[SHA512LEN], hexdigest[2*SHA512LEN];
-  int i;
-  size_t start, remaining;
-
-  start = strlen(target->value);
-  remaining = target->size - start;
-
-  SHA512(input, digest);
-  for (i=0; i<SHA512LEN; ++i)
-  {
-    sprintf(hexdigest+(i * 2), "%02x", (unsigned char) digest[i]);
-  }
-
-  snprintf(
-    target->value + start,
-    remaining,
-    "%s",
-    hexdigest
-  );
-}
-
-
 
 /*
   Join path components to a single path. If b is an absolute path, a is ignored.
@@ -557,31 +587,42 @@ join_paths(buffer_t * a, const char * b)
 
   if (b != NULL && b[0] == '/')
   {
-    snprintf(a->value, a->size, "%s", b);
+    copy_string(a, b, 0);
     return;
   }
 
-  while (a->value[i] != '\0')
-  {
-    if (i >= (a->size - 1))
-    {
-      die(
-        "error: buffer overflow while joining \"%s\" and \"%s\"\n",
-        a->value,
-        b
-      );
-    }
-    i ++;
-  }
+  i = strlen(a->value);
   if (i > 0 && a->value[i-1] != '/')
   {
-    a->value[i] = '/';
+    copy_string(a, "/", i++);
   }
   if (b != NULL)
   {
-    snprintf(a->value + i, a->size - i, "%s", b);
+    copy_string(a, b, i);
   }
 }
+
+
+
+/*
+  Digest the input string and append it to the target.
+*/
+void
+append_sha512_hexdigest(buffer_t * target, const char * input)
+{
+  char digest[SHA512LEN], hexdigest[2*SHA512LEN+1];
+  int i;
+
+  SHA512(input, digest);
+  for (i=0; i<SHA512LEN; ++i)
+  {
+    sprintf(hexdigest+(i * 2), "%02x", (unsigned char) digest[i]);
+  }
+
+  join_paths(target, hexdigest);
+}
+
+
 
 
 /*
@@ -594,19 +635,19 @@ get_config_dir(buffer_t * path)
   value = getenv("XDG_CONFIG_HOME");
   if (value  != NULL)
   {
-    snprintf(path->value, path->size, "%s", value);
+    copy_string(path, value, 0);
   }
   else
   {
     value = getenv("HOME");
-    snprintf(path->value, path->size, "%s", value);
+    copy_string(path, value, 0);
     join_paths(path, ".config");
   }
   join_paths(path, NAME);
 //   drop_privileges();
   if (mkdir_p(path->value))
   {
-    die("error: failed to create configuration directory (%s)\n", strerror(errno));
+    die("error: failed to create configuration directory\n");
   }
 //   resume_privileges();
 }
@@ -628,35 +669,20 @@ get_parameter_filepath(
   {
     if (input_path[0] == '/' && input_path[1] == '/')
     {
-      snprintf(
-        output_path->value,
-        output_path->size,
-        "%s%s",
-        source_path,
-        input_path+1
-      );
+      copy_string(output_path, source_path, 0);
+      join_paths(output_path, input_path+2);
     }
     else
     {
-      snprintf(
-        output_path->value,
-        output_path->size,
-        "%s",
-        input_path
-      );
+      copy_string(output_path, input_path, 0);
     }
     return;
   }
   get_config_dir(output_path);
-  join_paths(output_path, NULL);
   fullpath = realpath(source_path, NULL);
   if (fullpath == NULL)
   {
-    die(
-      "error: failed to canonicalize path (%s: %s)\n",
-      source_path,
-      strerror(errno)
-    );
+    die("error: failed to canonicalize path (%s)\n", source_path);
   }
   append_sha512_hexdigest(output_path, fullpath);
   free(fullpath);
@@ -673,7 +699,7 @@ ensure_accessible_directory(char * path)
   struct stat st;
   if (stat(path, &st))
   {
-    die("error: failed to stat %s (%s)\n", path, strerror(errno));
+    die("error: failed to stat %s\n", path);
   }
   if (! S_ISDIR(st.st_mode))
   {
@@ -688,6 +714,78 @@ ensure_accessible_directory(char * path)
 
 
 
+
+/*********************************** keyctl ***********************************/
+
+/*
+  Based on https://kernel.googlesource.com/pub/scm/linux/kernel/git/dhowells/keyutils/+/v1.5.6/keyctl.c#794
+*/
+void
+unlink_key_by_ecryptfs_sig(const char * ecryptfs_sig)
+{
+  key_serial_t key, *pk;
+  key_perm_t perm;
+  void *keylist;
+  char *buffer;
+  uid_t uid;
+  gid_t gid;
+  int count, tlen, dpos, n, ret;
+
+  count = keyctl_read_alloc(KEY_SPEC_USER_KEYRING, &keylist);
+  if (count < 0)
+    die("error: keyctl_read_alloc failed");
+  count /= sizeof(key_serial_t);
+  if (count == 0) {
+    debug_print0("keyring is empty\n");
+    return;
+  }
+  pk = keylist;
+  do {
+    key = *pk++;
+    ret = keyctl_describe_alloc(key, &buffer);
+    if (ret < 0) {
+      debug_print("%9d: key inaccessible\n", key);
+      continue;
+    }
+    uid = 0;
+    gid = 0;
+    perm = 0;
+    tlen = -1;
+    dpos = -1;
+    n = sscanf((char *) buffer, "%*[^;]%n;%u;%u;%x;%n",
+         &tlen, &uid, &gid, &perm, &dpos);
+    if (n != 3) {
+      die("error: unparsable description obtained for key %d\n", key);
+    }
+    if (! strcmp(ecryptfs_sig, buffer+dpos))
+    {
+      debug_print("unlinking key %9d\n", key);
+      if (keyctl_unlink(key, KEY_SPEC_USER_KEYRING) < 0)
+      {
+        fprintf(stderr, "failed to unlink key from keyring: %9d\n", key);
+      }
+    }
+    free(buffer);
+  } while (--count);
+}
+
+
+#define unlink_key(name) \
+  if (extract_option_value(opts_str, name, option)) \
+  { \
+    printf("Unlinking key: %s [%s]\n", option, name); \
+    unlink_key_by_ecryptfs_sig(option); \
+  }
+
+void unlink_ecryptfs_keys(const char * opts_str)
+{
+  char option[MAX_OPTS_STR_LEN] = {0};
+  unlink_key(SIG_OPTION);
+  unlink_key(FNEK_SIG_OPTION);
+}
+
+
+
 /********************************** Mounting **********************************/
 
 
@@ -695,34 +793,56 @@ ensure_accessible_directory(char * path)
   Check if the path is a mountpoint.
 */
 int
-is_mountpoint(char * path, int ensure_ecryptfs)
+is_mountpoint(const char * path, int ensure_ecryptfs)
 {
-  // See mountpoint.c
   struct libmnt_table * tb = mnt_new_table_from_file("/proc/self/mountinfo");
   struct libmnt_fs * fs;
   struct libmnt_cache * cache;
   const char * fstype;
+  int rc = 0;
+
+  debug_print("checking if %s is a mountpoint\n", path);
 
   cache = mnt_new_cache();
+  if (cache == NULL)
+  {
+    die("error: failed to load mount cache\n");
+  }
   mnt_table_set_cache(tb, cache);
+  if (tb == NULL)
+  {
+    die("error: failed to load mount table\n");
+  }
   fs = mnt_table_find_target(tb, path, MNT_ITER_BACKWARD);
-
-  mnt_free_table(tb);
-  mnt_free_cache(cache);
-
-
   if (fs)
   {
     if (ensure_ecryptfs)
     {
       fstype = mnt_fs_get_fstype(fs);
-      return (strcmp(fstype, FS_TYPE) == 0);
+      rc = (strcmp(fstype, FS_TYPE) == 0);
     }
-    return 1;
+    else
+    {
+      rc = 1;
+    }
+    mnt_free_fs(fs);
   }
-  return 0;
+  mnt_free_table(tb);
+  mnt_free_cache(cache);
+  if (rc)
+  {
+    debug_print("%s is a mountpoint\n", path);
+  }
+  return rc;
 }
-
+// extern const char *mnt_fs_get_fstype(struct libmnt_fs *fs);
+// extern char *mnt_fs_strdup_options(struct libmnt_fs *fs)
+// extern const char *mnt_fs_get_options(struct libmnt_fs *fs)
+// extern const char *mnt_fs_get_optional_fields(struct libmnt_fs *fs)
+// extern const char *mnt_fs_get_fs_options(struct libmnt_fs *fs);
+// extern const char *mnt_fs_get_vfs_options(struct libmnt_fs *fs);
+// extern const char *mnt_fs_get_user_options(struct libmnt_fs *fs);
+// extern const char *mnt_fs_get_attributes(struct libmnt_fs *fs);
 
 
 int
@@ -731,7 +851,7 @@ mnt_match_source(struct libmnt_fs * fs, void * path)
   const char * mnt_path;
   mnt_path = mnt_fs_get_srcpath(fs);
   return (
-           strcmp(mnt_path, (char *) path) == 0 &&
+	   strcmp(mnt_path, (char *) path) == 0 &&
            strcmp(mnt_fs_get_fstype(fs), FS_TYPE) == 0
          );
 }
@@ -744,7 +864,7 @@ mnt_match_target(struct libmnt_fs * fs, void * path)
   const char * mnt_path;
   mnt_path = mnt_fs_get_target(fs);
   return (
-           strcmp(mnt_path, (char *) path) == 0 &&
+	   strcmp(mnt_path, (char *) path) == 0 &&
            strcmp(mnt_fs_get_fstype(fs), FS_TYPE) == 0
          );
 }
@@ -758,7 +878,7 @@ unmount_target(const char * path)
   resume_privileges();
   if (umount2(path, 0))
   {
-    die("error: failed to unmount %s (%s)\n", path, strerror(errno));
+    die("error: failed to unmount %s\n", path);
   }
   drop_privileges();
 }
@@ -766,7 +886,7 @@ unmount_target(const char * path)
 
 
 void
-unmount_simple(const char * path)
+unmount_simple(const char * path, int unlink_keys)
 {
   //http://www.kernel.org/pub/linux/utils/util-linux/v2.21/libmount-docs/index.html
   struct libmnt_table * tb = mnt_new_table_from_file("/proc/self/mountinfo");
@@ -775,6 +895,12 @@ unmount_simple(const char * path)
   struct libmnt_iter * iter;
   const char * target;
   int did_something;
+
+  char opts_str[MAX_OPTS_STR_LEN] = {0};
+  buffer_t opts_buffer = {
+    .value=opts_str,
+    .size=sizeof(opts_str)
+  };
 
   did_something = 0;
   cache = mnt_new_cache();
@@ -804,7 +930,12 @@ unmount_simple(const char * path)
     target = mnt_fs_get_target(fs);
     if (target != NULL)
     {
+      if (unlink_keys)
+      {
+	copy_string(&opts_buffer, mnt_fs_get_options(fs), 0);
+      }
       unmount_target(target);
+      unlink_ecryptfs_keys(opts_buffer.value);
       did_something = 1;
     }
   }
@@ -813,9 +944,9 @@ unmount_simple(const char * path)
   mnt_free_cache(cache);
   mnt_free_iter(iter);
 
-  if (!did_something)
+  if (!did_something && is_mountpoint(path, 1))
   {
-    die("no matching " FS_TYPE " mountpoints found.\n");
+    die("error: no matching " FS_TYPE " mountpoints found.\n");
   }
 }
 
@@ -958,52 +1089,35 @@ arr_maybe_append_parameter(char * * arr, char * param)
 
 
 // This assumes that the length of "target" is MAX_OPTS_STR_LEN.
-int
-str_maybe_append_parameter(char * target, char * dirty_param, int start)
+size_t
+str_maybe_append_parameter(buffer_t * target, const char * dirty_param, size_t offset)
 {
   char param[MAX_OPTS_STR_LEN] = {0};
-  size_t i, j;
+  buffer_t param_buffer = {
+    .value=param,
+    .size=sizeof(param)
+  };
 
-  i = (start < 0) ? strlen(target) : (size_t) start;
-  snprintf(param, sizeof(param), "%s", dirty_param);
-  clean_opts_str(param);
-  debug_print("target: \"%s\", param: \"%s\", pos: %d\n", target, param, i);
-  if (param[0] == '\0')
+  copy_string(&param_buffer, dirty_param, 0);
+  clean_opts_str(param_buffer.value);
+  debug_print(
+    "target: \"%s\", param: \"%s\", pos: %lu\n",
+    target->value,
+    param_buffer.value,
+    offset
+  );
+  if (param_buffer.value[0] == '\0')
   {
     debug_print0("skipping empty parameter\n");
-    return i;
+    return offset;
   }
-  if (i > 0)
+  if (offset > 0)
   {
-    // Room needed for null character and comma.
-    if (MAX_OPTS_STR_LEN - i < 2)
-    {
-      die(
-        "error: maximum option string length exceeded (%u/%u)\n",
-        i + 2,
-        MAX_OPTS_STR_LEN
-      );
-    }
-    target[i++] = ',';
-    target[i] = '\0';
-    debug_print("added comma: \"%s\"\n", target);
+    offset = copy_string_n(target, ",", offset);
   }
-  for (j=0; param[j] != '\0'; ++j)
-  {
-    if (MAX_OPTS_STR_LEN - i < 2)
-    {
-      die(
-        "error: maximum option string length exceeded (%u/%u)\n",
-        i + 2,
-        MAX_OPTS_STR_LEN
-      );
-    }
-    target[i] = param[j];
-    i ++;
-  }
-  target[i] = '\0';
-  debug_print("output string: \"%s\"\n", target);
-  return i;
+  offset = copy_string_n(target, param_buffer.value, offset);
+  debug_print("output string: \"%s\"\n", target->value);
+  return offset;
 }
 
 
@@ -1054,7 +1168,7 @@ sort_opts_str(buffer_t * opts_buffer)
     n ++;
   }
 
-  debug_print("detected %lu options\n", (long unsigned int)n);
+  debug_print("detected %lu options\n", n);
 
   /*
     Create a temporary array to hold these options. Each array element will
@@ -1161,7 +1275,7 @@ sort_opts_str(buffer_t * opts_buffer)
     debug_print("updated: \"%s\"\n", sorted_str);
   }
 
-  snprintf(opts_buffer->value, opts_buffer->size, "%s", sorted_str);
+  copy_string(opts_buffer, sorted_str, 0);
   debug_print("output string: \"%s\"\n", opts_buffer->value);
 }
 
@@ -1211,10 +1325,10 @@ concatenate_mnt_params(
       }
       if (i > 0)
       {
-        i += snprintf(buffer->value+i, buffer->size-i, "%s", ",");
+        i = copy_string_n(buffer, ",", i);
       }
       debug_print("adding %s\n", param);
-      i += snprintf(buffer->value+i, buffer->size-i, "%s", param);
+      i = copy_string_n(buffer, param, i);
     }
     mnt_params = mnt_params->next;
   }
@@ -1231,7 +1345,7 @@ concatenate_parameters(
 )
 {
   debug_print("input string: \"%s\"\n", concatenated_opts_buffer->value);
-  int i, length = -1;
+  size_t i, length = 0;
   char c, * param, tmp_str[MAX_OPTS_STR_LEN];
 
   while (mnt_params != NULL)
@@ -1254,8 +1368,8 @@ concatenate_parameters(
       if (! opts_str_contains_option(concatenated_opts_buffer->value, tmp_str))
       {
         length = str_maybe_append_parameter(
-          concatenated_opts_buffer->value,
-          (char *) mnt_params->val,
+          concatenated_opts_buffer,
+	  (char *) mnt_params->val,
           length
         );
       }
@@ -1267,7 +1381,7 @@ concatenate_parameters(
       {
         debug_print0("adding " FNE_OPTION "\n");
         length = str_maybe_append_parameter(
-          concatenated_opts_buffer->value,
+          concatenated_opts_buffer,
           FNE_OPTION "=" YES_OPTION,
           length
         );
@@ -1283,7 +1397,7 @@ concatenate_parameters(
     if (! opts_str_contains_option(concatenated_opts_buffer->value, default_parameters[i].name))
     {
       length = str_maybe_append_parameter(
-        concatenated_opts_buffer->value,
+        concatenated_opts_buffer,
         default_parameters[i].value,
         length
       );
@@ -1295,7 +1409,7 @@ concatenate_parameters(
   if (opts_str != NULL)
   {
     length = str_maybe_append_parameter(
-      concatenated_opts_buffer->value,
+      concatenated_opts_buffer,
       opts_str,
       length
     );
@@ -1322,22 +1436,23 @@ save_parameters(char * opts_str, char * filepath)
   old_opts_str[0] = '\0';
 
   debug_print("saving options to %s\n", filepath);
-
   // Ensure restrictive permission on the created file just in case.
 //   drop_privileges();
   old_mode = umask(S_IRWXG | S_IRWXO);
   f = fopen(filepath, "a+b");
   if (f == NULL)
   {
-    die("error: failed to open %s for writing (%s)\n", filepath, strerror(errno));
+    debug_print0("failed to open file\n");
+    debug_print_ids;
+    die("error: failed to open %s for writing\n", filepath);
   }
-  IGNORE_RESULT(fgets(old_opts_str, MAX_OPTS_STR_LEN, f));
+  IGNORE_RETURN_VALUE(fgets(old_opts_str, MAX_OPTS_STR_LEN, f));
 
   debug_print("new options: \"%s\"\n", opts_str);
   debug_print("old options: \"%s\"\n", old_opts_str);
   if (strcmp(opts_str, old_opts_str) != 0)
   {
-    IGNORE_RESULT(ftruncate(fileno(f), 0));
+    IGNORE_RETURN_VALUE(ftruncate(fileno(f), 0));
 //     fseek(f, 0, SEEK_SET);
     fputs(opts_str, f);
     debug_print0("saved\n");
@@ -1352,26 +1467,36 @@ save_parameters(char * opts_str, char * filepath)
 void
 load_parameters(buffer_t * opts_buffer, char * filepath)
 {
-  char tmp_str[MAX_OPTS_STR_LEN];
-  tmp_str[0] = '\0';
+  char tmp_str[MAX_OPTS_STR_LEN] = {0};
+  buffer_t tmp_buffer = {
+    .value=tmp_str,
+    .size=sizeof(tmp_str)
+  };
 
-  if (! access(filepath, R_OK))
+  debug_print("reading options from %s\n", filepath);
+  FILE * f = fopen(filepath, "rb");
+  if (f == NULL)
   {
-    debug_print("reading options from %s\n", filepath);
-    FILE * f = fopen(filepath, "rb");
-    if (f == NULL)
+    debug_print0("unable to read file\n");
+    debug_print_ids;
+    if (errno == ENOENT)
     {
-      die("error: failed to open %s for reading (%s)\n", filepath, strerror(errno));
+      errno = 0;
+      return;
     }
-    IGNORE_RESULT(fgets(tmp_str, MAX_OPTS_STR_LEN, f));
-    fclose(f);
-    clean_opts_str(tmp_str);
-    debug_print("options: %s\n", tmp_str);
-    clean_opts_str(opts_buffer->value);
-    if (str_maybe_append_parameter(tmp_str, opts_buffer->value, -1) > 0)
+    else
     {
-      snprintf(opts_buffer->value, opts_buffer->size, "%s", tmp_str);
+      die("error: failed to open %s for reading\n", filepath);
     }
+  }
+  IGNORE_RETURN_VALUE(fgets(tmp_str, MAX_OPTS_STR_LEN, f));
+  fclose(f);
+  clean_opts_str(tmp_str);
+  debug_print("options: %s\n", tmp_str);
+  clean_opts_str(opts_buffer->value);
+  if (str_maybe_append_parameter(&tmp_buffer, opts_buffer->value, strlen(tmp_buffer.value)) > 0)
+  {
+    copy_string(opts_buffer, tmp_str, 0);
   }
   debug_print("with CLI options: %s\n", opts_buffer->value);
   sort_opts_str(opts_buffer);
@@ -1560,7 +1685,7 @@ static struct argp_option options[] =
     'k',
     0,
     0,
-    "Unlink the associated key from the keyring when unmounting a directory. This will only work if the directory was mounted with the automount option. This implies \"unmount\".",
+    "Unlink the associated key from the keyring when unmounting a directory. If the directory is mounted then the keys will be parsed from the mount options. If the directory is not mounted and the automount option is given, then the keys will be parsed from the configuration file.",
     0
   },
   {
@@ -1638,7 +1763,6 @@ parse_opt (int key, char * arg, struct argp_state * state)
     break;
   case 'k':
     arguments->unlink = 1;
-    arguments->unmount = 1;
     break;
   case 'x':
     arguments->excluded_options = arg;
@@ -1679,6 +1803,7 @@ parse_opt (int key, char * arg, struct argp_state * state)
       arguments->argc == 1 &&
       ! arguments->reset &&
       ! arguments->unmount &&
+      ! arguments->unlink &&
       ! arguments->print_config_path
     )
     {
@@ -1705,7 +1830,7 @@ static struct argp argp = {
 void
 prompt_parameters(buffer_t * opts_buffer, buffer_t * mnt_params_buffer)
 {
-  int rc;
+  int rc, orig_errno;
   char tmp_str[MAX_OPTS_STR_LEN] = {0};
   buffer_t tmp_buffer = {
     .value=tmp_str,
@@ -1724,6 +1849,9 @@ prompt_parameters(buffer_t * opts_buffer, buffer_t * mnt_params_buffer)
   memset(mnt_params, 0, sizeof(struct val_node));
   memset(&ctx, 0, sizeof(struct ecryptfs_ctx));
   ctx.get_string = &prompt_string_compatible;
+  // The process decision graph sometimes sets errno.
+  orig_errno = errno;
+  errno = 0;
   rc = ecryptfs_process_decision_graph(
     &ctx,
     &mnt_params,
@@ -1733,27 +1861,27 @@ prompt_parameters(buffer_t * opts_buffer, buffer_t * mnt_params_buffer)
   );
   if (rc)
   {
-    die("error: failed to prompt for options\n");
+    die("error: option prompt failed\n");
   }
+  else if (errno)
+  {
+    debug_print0("ignoring errno set by ecryptfs_process_decision_graph\n");
+  }
+  errno = orig_errno;
 
   concatenate_parameters(&tmp_buffer, mnt_params, opts_buffer->value);
 
   if (mnt_params_buffer->value != NULL)
   {
 //     mnt_params_buffer->value[0] = '\0';
-    snprintf(
-      mnt_params_buffer->value,
-      mnt_params_buffer->size,
-      "%s",
-      "ecryptfs_unlink_sigs"
-    );
+    copy_string(mnt_params_buffer, "ecryptfs_unlink_sigs", 0);
     concatenate_mnt_params(mnt_params_buffer, mnt_params);
     sort_opts_str(mnt_params_buffer);
     debug_print("mnt_params_str: %s\n", mnt_params_buffer->value);
   }
 
   free(mnt_params);
-  snprintf(opts_buffer->value, opts_buffer->size, "%s", tmp_buffer.value);
+  copy_string(opts_buffer, tmp_buffer.value, 0);
   debug_print("opts_str: %s\n", opts_buffer->value);
 }
 
@@ -1770,7 +1898,7 @@ mount_ecryptfs(char * source_path, char * target_path, char * opts_str)
   resume_privileges();
   if (mount(source_path, target_path, FS_TYPE, 0, opts_str))
   {
-    die("error: mount failed (%s)\n", strerror(errno));
+    die("error: mount failed\n");
   }
   drop_privileges();
 }
@@ -1804,6 +1932,7 @@ sigint_handler(int sig)
 void
 initialize(void)
 {
+  debug_print0("initializing\n");
   // Check that setuid and setgid work. This will also drop privileges.
   initialize_uids();
   check_privileges();
@@ -1832,67 +1961,8 @@ initialize(void)
   {
     die("error: failed to lock memory\n");
   }
+  debug_print0("finished initializing\n");
 }
-
-
-
-
-/*********************************** keyctl ***********************************/
-
-/*
-  Based on https://kernel.googlesource.com/pub/scm/linux/kernel/git/dhowells/keyutils/+/v1.5.6/keyctl.c#794
-*/
-void
-unlink_key_by_ecryptfs_sig(const char * ecryptfs_sig)
-{
-  key_serial_t key, *pk;
-  key_perm_t perm;
-  void *keylist;
-  char *buffer;
-  uid_t uid;
-  gid_t gid;
-  int count, tlen, dpos, n, ret;
-
-  count = keyctl_read_alloc(KEY_SPEC_USER_KEYRING, &keylist);
-  if (count < 0)
-    die("keyctl_read_alloc failed");
-  count /= sizeof(key_serial_t);
-  if (count == 0) {
-    debug_print0("keyring is empty\n");
-    return;
-  }
-  pk = keylist;
-  do {
-    key = *pk++;
-    ret = keyctl_describe_alloc(key, &buffer);
-    if (ret < 0) {
-      debug_print("%9d: key inaccessible (%s)\n", key, strerror(errno));
-      continue;
-    }
-    uid = 0;
-    gid = 0;
-    perm = 0;
-    tlen = -1;
-    dpos = -1;
-    n = sscanf((char *) buffer, "%*[^;]%n;%u;%u;%x;%n",
-         &tlen, &uid, &gid, &perm, &dpos);
-    if (n != 3) {
-      die("unparseable description obtained for key %d\n", key);
-    }
-    if (! strcmp(ecryptfs_sig, buffer+dpos))
-    {
-      debug_print("unlinking key %9d\n", key);
-      if (keyctl_unlink(key, KEY_SPEC_USER_KEYRING) < 0)
-      {
-        fprintf(stderr, "failed to unlink key from keyring: %9d\n", key);
-      }
-    }
-    free(buffer);
-  } while (--count);
-}
-
-
-
 
 /************************************ Main ************************************/
 int
@@ -1904,8 +1974,6 @@ main(int argc, char * * argv)
   char path_str[PATH_MAX + 1] = {0};
   char opts_str[MAX_OPTS_STR_LEN] = {0};
   char mnt_params_str[MAX_OPTS_STR_LEN] = {0};
-  char ecryptfs_sig[MAX_OPTS_STR_LEN] = {0};
-  size_t len;
 //   key_serial_t ecryptfs_key;
 
   buffer_t path_buffer = {
@@ -1928,6 +1996,7 @@ main(int argc, char * * argv)
   source_path = arguments.argv[0];
   target_path = arguments.argv[1];
 
+
   if (arguments.reset || arguments.print_config_path)
   {
     get_parameter_filepath(&path_buffer, source_path, arguments.config_path);
@@ -1941,7 +2010,10 @@ main(int argc, char * * argv)
       printf("Removing %s\n", path_buffer.value);
       if (unlink(path_buffer.value))
       {
-        die("error: failed to remove %s (%s)\n", path_buffer.value, strerror(errno));
+        if (errno != ENOENT)
+        {
+          die("error: failed to remove %s\n", path_buffer.value);
+        }
       }
     }
   }
@@ -1954,27 +2026,12 @@ main(int argc, char * * argv)
 
   if (arguments.argc == 1 || arguments.unmount)
   {
-    unmount_simple(source_path);
-    // Unlink the key from the keyring. Add an option for this once it works.
-    /*
-      http://man7.org/linux/man-pages/man2/keyctl.2.html
-      https://lwn.net/Articles/210502/
-
-      I can't find clear documentation of how to do this. My current
-      I understanding is that need to pass it a user key type but can't find it
-      I in the headers. am clearly missing something.
-
-      I The ecryptfs_sig is part of the key's description. The plan is to use it
-      I to get the keyring ID and unlink it on exit.
-    */
-    if (arguments.unlink)
+    unmount_simple(source_path, arguments.unlink);
+    if (arguments.unlink && arguments.automount)
     {
       get_parameter_filepath(&path_buffer, source_path, arguments.config_path);
       load_parameters(&opts_buffer, path_buffer.value);
-      if (extract_option_value(opts_buffer.value, SIG_OPTION, ecryptfs_sig))
-      {
-        unlink_key_by_ecryptfs_sig(ecryptfs_sig);
-      }
+      unlink_ecryptfs_keys(opts_buffer.value);
     }
     else
     {
@@ -2001,20 +2058,22 @@ main(int argc, char * * argv)
   // The string needs to be mutable for cleaning, so allocate memory.
   if (arguments.excluded_options != NULL)
   {
-    len = strlen(arguments.excluded_options);
-    excluded_options = realloc(excluded_options, (len + 1) * sizeof(char));
+    excluded_options = realloc(
+      excluded_options,
+      (strlen(arguments.excluded_options)+1) * sizeof(char)
+    );
     if (excluded_options == NULL)
     {
       die("error: failed to allocate memory\n");
     }
-    snprintf(excluded_options, len + 1, "%s", arguments.excluded_options);
+    strcpy(excluded_options, arguments.excluded_options);
     clean_opts_str(excluded_options);
     debug_print("excluded options: \"%s\"\n", excluded_options);
   }
 
   if (arguments.mount_options != NULL)
   {
-    snprintf(opts_str, sizeof(opts_str),"%s", arguments.mount_options);
+    strcpy(opts_str, arguments.mount_options);
   }
   else
   {
