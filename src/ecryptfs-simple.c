@@ -1,4 +1,4 @@
-﻿/*
+/*
 Copyright (C) 2012-2016  Xyne
 
 This program is free software; you can redistribute it and/or
@@ -725,8 +725,8 @@ unlink_key_by_ecryptfs_sig(const char * ecryptfs_sig)
 {
   key_serial_t key, *pk;
   key_perm_t perm;
-  void *keylist;
-  char *buffer;
+  void * keylist;
+  char * buffer;
   uid_t uid;
   gid_t gid;
   int count, tlen, dpos, n, ret;
@@ -752,7 +752,7 @@ unlink_key_by_ecryptfs_sig(const char * ecryptfs_sig)
     perm = 0;
     tlen = -1;
     dpos = -1;
-    n = sscanf((char *) buffer, "%*[^;]%n;%u;%u;%x;%n",
+    n = sscanf(buffer, "%*[^;]%n;%u;%u;%x;%n",
          &tlen, &uid, &gid, &perm, &dpos);
     if (n != 3) {
       die("error: unparsable description obtained for key %d\n", key);
@@ -793,12 +793,11 @@ void unlink_ecryptfs_keys(const char * opts_str)
   Check if the path is a mountpoint.
 */
 int
-is_mountpoint(const char * path, int ensure_ecryptfs)
+is_mountpoint(const char * path, int ensure_ecryptfs, int find_src)
 {
   struct libmnt_table * tb = mnt_new_table_from_file("/proc/self/mountinfo");
   struct libmnt_fs * fs;
   struct libmnt_cache * cache;
-  const char * fstype;
   int rc = 0;
 
   debug_print("checking if %s is a mountpoint\n", path);
@@ -813,13 +812,19 @@ is_mountpoint(const char * path, int ensure_ecryptfs)
   {
     die("error: failed to load mount table\n");
   }
-  fs = mnt_table_find_target(tb, path, MNT_ITER_BACKWARD);
+  if (find_src)
+  {
+    fs = mnt_table_find_srcpath(tb, path, MNT_ITER_BACKWARD);
+  }
+  else
+  {
+    fs = mnt_table_find_target(tb, path, MNT_ITER_BACKWARD);
+  }
   if (fs)
   {
     if (ensure_ecryptfs)
     {
-      fstype = mnt_fs_get_fstype(fs);
-      rc = (strcmp(fstype, FS_TYPE) == 0);
+      rc = (strcmp(mnt_fs_get_fstype(fs), FS_TYPE) == 0);
     }
     else
     {
@@ -835,38 +840,20 @@ is_mountpoint(const char * path, int ensure_ecryptfs)
   }
   return rc;
 }
-// extern const char *mnt_fs_get_fstype(struct libmnt_fs *fs);
-// extern char *mnt_fs_strdup_options(struct libmnt_fs *fs)
-// extern const char *mnt_fs_get_options(struct libmnt_fs *fs)
-// extern const char *mnt_fs_get_optional_fields(struct libmnt_fs *fs)
-// extern const char *mnt_fs_get_fs_options(struct libmnt_fs *fs);
-// extern const char *mnt_fs_get_vfs_options(struct libmnt_fs *fs);
-// extern const char *mnt_fs_get_user_options(struct libmnt_fs *fs);
-// extern const char *mnt_fs_get_attributes(struct libmnt_fs *fs);
 
 
 int
-mnt_match_source(struct libmnt_fs * fs, void * path)
+mnt_match_source_or_target(struct libmnt_fs * fs, void * path)
 {
-  const char * mnt_path;
-  mnt_path = mnt_fs_get_srcpath(fs);
+  // Make sure that it is an ecryptfs mount.
+  if (strcmp(mnt_fs_get_fstype(fs), FS_TYPE))
+  {
+    return 0;
+  }
   return (
-	   strcmp(mnt_path, path) == 0 &&
-           strcmp(mnt_fs_get_fstype(fs), FS_TYPE) == 0
-         );
-}
-
-
-
-int
-mnt_match_target(struct libmnt_fs * fs, void * path)
-{
-  const char * mnt_path;
-  mnt_path = mnt_fs_get_target(fs);
-  return (
-	   strcmp(mnt_path, path) == 0 &&
-           strcmp(mnt_fs_get_fstype(fs), FS_TYPE) == 0
-         );
+    !strcmp(mnt_fs_get_srcpath(fs), path) ||
+    !strcmp(mnt_fs_get_target(fs), path)
+  );
 }
 
 
@@ -886,7 +873,7 @@ unmount_target(const char * path)
 
 
 void
-unmount_simple(char * path, int unlink_keys)
+unmount_simple(char * path, int unlink_keys, int * unlinked_keys)
 {
   //http://www.kernel.org/pub/linux/utils/util-linux/v2.21/libmount-docs/index.html
   struct libmnt_table * tb = mnt_new_table_from_file("/proc/self/mountinfo");
@@ -908,7 +895,7 @@ unmount_simple(char * path, int unlink_keys)
   iter = mnt_new_iter(MNT_ITER_BACKWARD);
 
   while (
-    ! mnt_table_find_next_fs(tb, iter, mnt_match_source, path, &fs) &&
+    ! mnt_table_find_next_fs(tb, iter, mnt_match_source_or_target, path, &fs) &&
     fs != NULL
   )
   {
@@ -917,10 +904,16 @@ unmount_simple(char * path, int unlink_keys)
     {
       if (unlink_keys)
       {
-	copy_string(&opts_buffer, mnt_fs_get_options(fs), 0);
+        copy_string(&opts_buffer, mnt_fs_get_options(fs), 0);
+        unmount_target(target);
+        unlink_ecryptfs_keys(opts_buffer.value);
+        *unlinked_keys = 1;
       }
-      unmount_target(target);
-      unlink_ecryptfs_keys(opts_buffer.value);
+      else
+      {
+        unmount_target(target);
+        *unlinked_keys = 0;
+      }
       did_something = 1;
     }
   }
@@ -929,7 +922,7 @@ unmount_simple(char * path, int unlink_keys)
   mnt_free_cache(cache);
   mnt_free_iter(iter);
 
-  if (!did_something && is_mountpoint(path, 1))
+  if (!did_something)
   {
     die("error: no matching " FS_TYPE " mountpoints found.\n");
   }
@@ -1275,10 +1268,10 @@ struct default_parameter
 // Easier to just duplicate the name than concatenate everything later.
 struct default_parameter default_parameters[] =
 {
-  {
-    .name="ecryptfs_passthrough",
-    .value="ecryptfs_passthrough"
-  },
+//   {
+//     .name="ecryptfs_passthrough",
+//     .value="ecryptfs_passthrough=n"
+//   },
   {
     .name=FNE_OPTION,
     .value=FNE_OPTION "=" NO_OPTION
@@ -1354,7 +1347,7 @@ concatenate_parameters(
       {
         length = str_maybe_append_parameter(
           concatenated_opts_buffer,
-	  mnt_params->val,
+          mnt_params->val,
           length
         );
       }
@@ -1670,7 +1663,7 @@ static struct argp_option options[] =
     'k',
     0,
     0,
-    "Unlink the associated key from the keyring when unmounting a directory. If the directory is mounted then the keys will be parsed from the mount options. If the directory is not mounted and the automount option is given, then the keys will be parsed from the configuration file.",
+    "Unlink the associated key from the keyring when unmounting a directory. If the directory is mounted then the keys will be parsed from the mount options. If the directory is not mounted and the automount option is given, then the keys will be parsed from the configuration file. This implies unmount.",
     0
   },
   {
@@ -1825,12 +1818,6 @@ prompt_parameters(buffer_t * opts_buffer, buffer_t * mnt_params_buffer)
   struct ecryptfs_ctx ctx;
   uint32_t version;
 
-  resume_privileges();
-
-  if (ecryptfs_get_version(&version))
-  {
-    die("error: failed to get eCryptfs version\n");
-  }
 
   mnt_params = malloc(sizeof(struct val_node));
   memset(mnt_params, 0, sizeof(struct val_node));
@@ -1839,6 +1826,11 @@ prompt_parameters(buffer_t * opts_buffer, buffer_t * mnt_params_buffer)
   // The process decision graph sometimes sets errno.
   orig_errno = errno;
   errno = 0;
+  resume_privileges();
+  if (ecryptfs_get_version(&version))
+  {
+    die("error: failed to get eCryptfs version\n");
+  }
   rc = ecryptfs_process_decision_graph(
     &ctx,
     &mnt_params,
@@ -1846,6 +1838,7 @@ prompt_parameters(buffer_t * opts_buffer, buffer_t * mnt_params_buffer)
     opts_buffer->value,
     ECRYPTFS_ASK_FOR_ALL_MOUNT_OPTIONS
   );
+  drop_privileges();
   if (rc)
   {
     die("error: option prompt failed\n");
@@ -1870,8 +1863,6 @@ prompt_parameters(buffer_t * opts_buffer, buffer_t * mnt_params_buffer)
   free(mnt_params);
   copy_string(opts_buffer, tmp_buffer.value, 0);
   debug_print("opts_str: %s\n", opts_buffer->value);
-
-  drop_privileges();
 }
 
 
@@ -1963,7 +1954,7 @@ main(int argc, char * * argv)
   char path_str[PATH_MAX + 1] = {0};
   char opts_str[MAX_OPTS_STR_LEN] = {0};
   char mnt_params_str[MAX_OPTS_STR_LEN] = {0};
-//   key_serial_t ecryptfs_key;
+  int unlinked_keys = 0;
 
   buffer_t path_buffer = {
     .value=path_str,
@@ -2013,22 +2004,26 @@ main(int argc, char * * argv)
   ensure_accessible_directory(source_path);
   source_path = realpath(source_path, NULL);
 
-  if (arguments.argc == 1 || arguments.unmount)
+  if (arguments.unmount || arguments.unlink)
   {
-    unmount_simple(source_path, arguments.unlink);
-    if (arguments.unlink && arguments.automount)
+    unmount_simple(source_path, arguments.unlink, &unlinked_keys);
+    if (arguments.unlink && !unlinked_keys)
     {
-      get_parameter_filepath(&path_buffer, source_path, arguments.config_path);
-      load_parameters(&opts_buffer, path_buffer.value);
-      unlink_ecryptfs_keys(opts_buffer.value);
-    }
-    else
-    {
-      if (!arguments.unlink)
+      if (arguments.automount)
       {
-	  printf("You may now remove leftover keys with keyctl if you are done.\n");
+        get_parameter_filepath(&path_buffer, source_path, arguments.config_path);
+        load_parameters(&opts_buffer, path_buffer.value);
+        unlink_ecryptfs_keys(opts_buffer.value);
+      }
+      else
+      {
+        printf("You may now remove leftover keys with keyctl if you are done.\n");
       }
     }
+    return EXIT_SUCCESS;
+  }
+  else if (arguments.argc == 1)
+  {
     return EXIT_SUCCESS;
   }
 
@@ -2040,7 +2035,7 @@ main(int argc, char * * argv)
   ensure_accessible_directory(target_path);
   target_path = realpath(target_path, NULL);
 
-  if (is_mountpoint(target_path, 0))
+  if (is_mountpoint(target_path, 0, 0))
   {
     die("error: %s is already a mountpoint\n", target_path);
   }
