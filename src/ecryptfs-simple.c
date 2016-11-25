@@ -295,7 +295,7 @@ do \
 
 /****************************** String Functions ******************************/
 
-inline size_t
+static size_t
 copy_string_n(buffer_t * a, const char * b, size_t offset)
 {
   size_t length = strlen(b);
@@ -1152,7 +1152,7 @@ sort_opts_str(buffer_t * opts_buffer)
     Create a temporary array to hold these options. Each array element will
     point to a location in the original options string.
   */
-  opts_arr = (char * *) alloca(n * sizeof(char *));
+  opts_arr = alloca(n * sizeof(char *));
   memset(opts_arr, 0, n * sizeof(char *));
 
   /*
@@ -1405,7 +1405,7 @@ concatenate_parameters(
  Save options to a file. Options are assumed to be in order.
 */
 void
-save_parameters(char * opts_str, char * filepath)
+save_parameters(const char * opts_str, const char * filepath)
 {
   char old_opts_str[MAX_OPTS_STR_LEN];
   mode_t old_mode;
@@ -1433,6 +1433,8 @@ save_parameters(char * opts_str, char * filepath)
     IGNORE_RETURN_VALUE(ftruncate(fileno(f), 0));
 //     fseek(f, 0, SEEK_SET);
     fputs(opts_str, f);
+    fputc('\n', f);
+
     debug_print0("saved\n");
   }
   fclose(f);
@@ -1443,7 +1445,7 @@ save_parameters(char * opts_str, char * filepath)
 
 
 void
-load_parameters(buffer_t * opts_buffer, char * filepath)
+load_parameters(buffer_t * opts_buffer, const char * filepath)
 {
   char tmp_str[MAX_OPTS_STR_LEN] = {0};
   buffer_t tmp_buffer = {
