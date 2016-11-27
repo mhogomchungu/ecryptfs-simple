@@ -1624,6 +1624,7 @@ static char args_doc[] = "[<source dir> <target dir> | <source dir> | <target di
 enum
 {
   PRINT_CONFIG_PATH_KEY = -1,
+  MOUNT_READ_ONLY = -2,
 } option_keys;
 
 static struct argp_option options[] =
@@ -1669,6 +1670,14 @@ static struct argp_option options[] =
     0
   },
   {
+    "readonly",
+    MOUNT_READ_ONLY,
+    0,
+    0,
+    "Mount the volume in read only mode.",
+    0
+  },
+  {
     "exclude",
     'x',
     "<name>[,<name>...]",
@@ -1700,7 +1709,7 @@ static struct argp_option options[] =
 struct arguments
 {
   char * argv[2];
-  int argc, unmount, unlink, automount, reset, print_config_path;
+  int argc, unmount, unlink, automount, reset, print_config_path, read_only;
   char * mount_options, * excluded_options, * config_path;
 };
 
@@ -1709,6 +1718,7 @@ struct arguments
 struct arguments arguments = \
 { \
   .argc = 0, \
+  .read_only = 0, \
   .automount = 0, \
   .reset = 0, \
   .print_config_path = 0, \
@@ -1753,6 +1763,10 @@ parse_opt (int key, char * arg, struct argp_state * state)
 
   case PRINT_CONFIG_PATH_KEY:
     arguments->print_config_path = 1;
+    break;
+
+  case MOUNT_READ_ONLY:
+    arguments->read_only = 1;
     break;
 
   case ARGP_KEY_ARG:
@@ -1871,14 +1885,19 @@ prompt_parameters(buffer_t * opts_buffer, buffer_t * mnt_params_buffer)
 
 
 void
-mount_ecryptfs(char * source_path, char * target_path, char * opts_str)
+mount_ecryptfs(const char * source_path, const char * target_path, const char * opts_str, int ro)
 {
+  unsigned long mode = MS_NOSUID | MS_NODEV;
+  if (ro)
+  {
+    mode |= MS_RDONLY;
+  }
   debug_print(
     "mount(\"%s\", \"%s\", \"%s\", 0, \"%s\")\n",
     source_path, target_path, FS_TYPE, opts_str
   );
   resume_privileges();
-  if (mount(source_path, target_path, FS_TYPE, 0, opts_str))
+  if (mount(source_path, target_path, FS_TYPE, mode, opts_str))
   {
     die("error: mount failed\n");
   }
@@ -2075,7 +2094,7 @@ main(int argc, char * * argv)
   }
   prompt_parameters(&opts_buffer, &mnt_params_buffer);
 
-  mount_ecryptfs(source_path, target_path, mnt_params_str);
+  mount_ecryptfs(source_path, target_path, mnt_params_str, arguments.read_only);
   if (arguments.automount)
   {
     printf("Saving to %s\n", path_buffer.value);
