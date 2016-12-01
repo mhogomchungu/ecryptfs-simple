@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.6)
 
 project(ecryptfs-simple)
-set (VERSION_MAJOR "2016.11.14")
+set (VERSION_MAJOR "2016.11.16.1")
 
 find_package(PkgConfig)
 
