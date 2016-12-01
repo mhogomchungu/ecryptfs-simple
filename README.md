@@ -4,7 +4,10 @@ a github fork of ecryptfs-simple project located at: http://xyne.archlinux.ca/pr
 This fork just puts it on github because upstream isnt here.
 
 
-Binary packages for various distributions can be obtained here: https://software.opensuse.org/download.html?project=home%3Amhogomchungu&package=ecryptfs-simple
+Binary packages for various distributions can be automatically installed by setting up respositories using
+instructions from here: https://software.opensuse.org/download.html?project=home%3Amhogomchungu&package=ecryptfs-simple
+
+Packages can be installed manually by downloading them from here: http://download.opensuse.org/repositories/home:/mhogomchungu/
 
 ps: Click the icon for your distribution to get instructions on how to install the package.
 
