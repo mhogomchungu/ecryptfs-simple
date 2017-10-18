@@ -5,9 +5,9 @@ This fork just puts it on github because upstream isnt here.
 
 
 Binary packages for various distributions can be automatically installed by setting up respositories using
-instructions from here: https://software.opensuse.org/download.html?project=home%3Amhogomchungu&package=ecryptfs-simple
+instructions from here: https://software.opensuse.org/download.html?project=home%3Aobs_mhogomchungu&package=ecryptfs-simple
 
-Packages can be installed manually by downloading them from here: http://download.opensuse.org/repositories/home:/mhogomchungu/
+Packages can be installed manually by downloading them from here: http://download.opensuse.org/repositories/home:/obs_mhogomchungu/
 
 ps: Click the icon for your distribution to get instructions on how to install the package.
 
